@@ -15,6 +15,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
@@ -37,6 +38,7 @@ var (
 
 	// structure file to be parsed
 	structFile = flag.String("struct", "", "待解析的结构体文件")
+	regular    = flag.String("regular", "", "对结构体的 regular 规则")
 
 	// interface
 	iface = flag.String("iface", "", "接口类型")
@@ -335,13 +337,20 @@ func getStructNameFromFile(filePath string, customSrc interface{}) map[string]st
 			switch spec.(type) {
 			case *ast.TypeSpec:
 				typeSpec := spec.(*ast.TypeSpec)
+				typeName := typeSpec.Name.Name
 
-				if _, ok := m[typeSpec.Name.Name]; ok {
+				if *regular != "" {
+					if match, err := regexp.Match(*regular, []byte(typeName)); err != nil || !match {
+						continue
+					}
+				}
+
+				if _, ok := m[typeName]; ok {
 					continue
 				}
 
 				// 由于是一份文件的, 而不是多份文件的, 因此只以 类型名 typeSpec.Name 为 key
-				m[typeSpec.Name.Name] = typeSpec.Name.Name
+				m[typeName] = typeName
 			case *ast.ValueSpec:
 				valueSpec := spec.(*ast.ValueSpec)
 				log.Println(valueSpec.Names)
