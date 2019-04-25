@@ -1,4 +1,5 @@
 // impl generates method stubs for implementing an interface.
+// Update: Read the file, get the structures, implement the interface from the structure
 package main
 
 import (
@@ -11,6 +12,7 @@ import (
 	"go/parser"
 	"go/printer"
 	"go/token"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -26,16 +28,18 @@ impl generates method stubs for recv to implement iface.
 
 Examples:
 
-impl 'f *File' io.Reader
-impl Murmur hash.Hash
-impl -dir $GOPATH/src/github.com/josharian/impl Murmur hash.Hash
-
-Don't forget the single quotes around the receiver type
-to prevent shell globbing.
+impl -struct src/struct-file/structA.go -iface io.Reader
+impl -flag $GOPATH/src/github.com/josharian/impl -struct src/struct-file/structA.go -iface io.Reader
 `
 
 var (
-	flagSrcDir = flag.String("dir", "", "package source directory, useful for vendored code")
+	flagSrcDir = flag.String("flag", "", "package source directory, useful for vendored code")
+
+	// structure file to be parsed
+	structFile = flag.String("struct", "", "待解析的结构体文件")
+
+	// interface
+	iface = flag.String("iface", "", "接口类型")
 )
 
 // findInterface returns the import path and identifier of an interface.
@@ -305,35 +309,102 @@ func validReceiver(recv string) bool {
 	return err == nil
 }
 
+// 读文件 获取文件下未冲突的 结构体名
+// 要求是在该文件下 **定义**
+func getStructNameFromFile(filePath string, customSrc interface{}) map[string]string {
+	m := make(map[string]string)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, filePath, customSrc, 0)
+	if err != nil {
+		panic(err)
+	}
+
+	ast.Inspect(f, func(n ast.Node) bool {
+		decl, ok := n.(*ast.GenDecl)
+		if !ok {
+			return true
+		}
+
+		if decl.Tok != token.TYPE {
+			return true
+		}
+
+		for _, spec := range decl.Specs {
+			// struct 属于 typeSpec
+			switch spec.(type) {
+			case *ast.TypeSpec:
+				typeSpec := spec.(*ast.TypeSpec)
+
+				if _, ok := m[typeSpec.Name.Name]; ok {
+					continue
+				}
+
+				// 由于是一份文件的, 而不是多份文件的, 因此只以 类型名 typeSpec.Name 为 key
+				m[typeSpec.Name.Name] = typeSpec.Name.Name
+			case *ast.ValueSpec:
+				valueSpec := spec.(*ast.ValueSpec)
+				log.Println(valueSpec.Names)
+			}
+		}
+		return true
+	})
+
+	return m
+}
+
+func addPrefix(stu string) (recv string) {
+	for _, v := range stu {
+		if v >= 0x41 && v <= 0x5A {
+			recv = recv + strings.ToLower(string(v))
+		}
+	}
+	return fmt.Sprintf("%s *%s", recv, stu)
+}
+
+func init() {
+	log.SetFlags(log.Llongfile)
+}
+
+type Result struct {
+	S []string
+}
+
+func (r *Result) String() string {
+	return strings.Join(r.S, "\n")
+}
+
 func main() {
 	flag.Parse()
 
-	if len(flag.Args()) < 2 {
-		fmt.Fprint(os.Stderr, usage)
-		os.Exit(2)
-	}
+	res := Result{}
 
-	recv, iface := flag.Arg(0), flag.Arg(1)
-	if !validReceiver(recv) {
-		fatal(fmt.Sprintf("invalid receiver: %q", recv))
-	}
+	structs := getStructNameFromFile(*structFile, nil)
 
-	if *flagSrcDir == "" {
-		if dir, err := os.Getwd(); err == nil {
-			*flagSrcDir = dir
+	for stu := range structs {
+		// File
+		recv := addPrefix(stu)
+
+		// f *File
+		if !validReceiver(recv) {
+			log.Fatal(fmt.Sprintf("invalid receiver: %q", recv))
 		}
+
+		if *flagSrcDir == "" {
+			if dir, err := os.Getwd(); err == nil {
+				*flagSrcDir = dir
+			}
+		}
+
+		fns, err := funcs(*iface, *flagSrcDir)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		src := genStubs(recv, fns)
+
+		res.S = append(res.S, string(src))
+
 	}
-
-	fns, err := funcs(iface, *flagSrcDir)
-	if err != nil {
-		fatal(err)
-	}
-
-	src := genStubs(recv, fns)
-	fmt.Print(string(src))
-}
-
-func fatal(msg interface{}) {
-	fmt.Fprintln(os.Stderr, msg)
-	os.Exit(1)
+	fmt.Print(&res)
 }

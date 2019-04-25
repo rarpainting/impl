@@ -222,3 +222,16 @@ func TestValidReceiver(t *testing.T) {
 		}
 	}
 }
+
+func TestGetStructNameFromFile(t *testing.T) {
+	types := []string{"Pkg", "Method", "Func", "Param", "Result"}
+	m := getStructNameFromFile("./impl.go", nil)
+	if len(types) != len(m) {
+		t.Errorf("Length between types & m NOT Match: [types]: %d, [m]: %d\n", len(types), len(m))
+	}
+	for _, v := range types {
+		if _, ok := m[v]; !ok {
+			t.Error("Unknown type: ", v)
+		}
+	}
+}
